@@ -191,3 +191,4 @@ export const FinancialSettings: React.FC<FinancialSettingsProps> = ({ organizer,
     </div>
   );
 };
+

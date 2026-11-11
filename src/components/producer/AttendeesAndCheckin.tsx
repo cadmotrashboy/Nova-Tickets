@@ -424,3 +424,4 @@ export const AttendeesAndCheckin: React.FC<AttendeesAndCheckinProps> = ({ organi
     </div>
   );
 };
+

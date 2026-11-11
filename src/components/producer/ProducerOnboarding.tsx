@@ -220,3 +220,4 @@ export const ProducerOnboarding: React.FC<ProducerOnboardingProps> = ({ onSucces
     </div>
   );
 };
+

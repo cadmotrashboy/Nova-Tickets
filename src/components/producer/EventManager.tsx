@@ -13,7 +13,8 @@ import {
   Ticket, 
   Play, 
   Pause, 
-  ArrowLeft,
+  ArrowLeft, 
+  Camera,
   Image as ImageIcon,
   DollarSign,
   Percent,
@@ -476,6 +477,14 @@ export const EventManager: React.FC<EventManagerProps> = ({
                       <span>Gerenciar Lotes</span>
                     </button>
 
+                    <Link
+                      to={`/portaria/${ev.id}`}
+                      className="p-2 bg-slate-900 hover:bg-black text-white rounded-xl transition"
+                      title="Abrir Modo Portaria (Leitor QR)"
+                    >
+                      <Camera className="w-4 h-4 text-blue-400" />
+                    </Link>
+
                     <button
                       onClick={() => handleEditEvent(ev)}
                       className="p-2 bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 rounded-xl transition"
@@ -743,7 +752,14 @@ export const EventManager: React.FC<EventManagerProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                to={`/portaria/${selectedEvent.id}`}
+                className="px-3.5 py-2 bg-slate-900 hover:bg-black text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow"
+              >
+                <Camera className="w-3.5 h-3.5 text-blue-400" />
+                <span>Abrir Modo Portaria (Leitor QR)</span>
+              </Link>
               <Link
                 to={`/evento/${selectedEvent.slug}`}
                 target="_blank"
@@ -1019,3 +1035,4 @@ export const EventManager: React.FC<EventManagerProps> = ({
     </div>
   );
 };
+

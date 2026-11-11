@@ -403,3 +403,4 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({ organizer,
     </div>
   );
 };
+
