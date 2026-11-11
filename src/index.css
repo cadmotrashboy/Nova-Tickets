@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply antialiased text-gray-900 bg-gray-50;
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  }
+}
+
+/* Estilo para recorte do ticket stub */
+.ticket-notch-left {
+  position: absolute;
+  top: 50%;
+  left: -12px;
+  width: 24px;
+  height: 24px;
+  background-color: #f9fafb;
+  border-radius: 50%;
+  transform: translateY(-50%);
+}
+
+.ticket-notch-right {
+  position: absolute;
+  top: 50%;
+  right: -12px;
+  width: 24px;
+  height: 24px;
+  background-color: #f9fafb;
+  border-radius: 50%;
+  transform: translateY(-50%);
+}
+
