@@ -124,15 +124,13 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <span>Meus Ingressos</span>
               </Link>
 
-              <button
-                onClick={() => {
-                  alert('O módulo do Produtor / Criar Evento faz parte do Módulo 2.');
-                }}
+              <Link
+                to="/dashboard"
                 className="text-sm font-semibold text-gray-700 hover:text-blue-600 px-3.5 py-2 border border-gray-200 rounded-xl hover:border-blue-400 transition flex items-center gap-1.5"
               >
                 <PlusCircle className="w-4 h-4 text-blue-600" />
-                <span>Criar Evento</span>
-              </button>
+                <span>Painel do Produtor</span>
+              </Link>
 
               {user ? (
                 <div className="flex items-center gap-3 pl-2 border-l border-gray-200">
@@ -227,16 +225,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span>Meus Ingressos</span>
             </Link>
 
-            <button
-              onClick={() => {
-                setMobileMenuOpen(false);
-                alert('O módulo do Produtor / Criar Evento faz parte do Módulo 2.');
-              }}
-              className="w-full flex items-center justify-center gap-2 py-2.5 text-sm font-semibold border border-gray-200 rounded-xl"
+            <Link
+              to="/dashboard"
+              onClick={() => setMobileMenuOpen(false)}
+              className="w-full flex items-center justify-center gap-2 py-2.5 text-sm font-semibold border border-gray-200 rounded-xl hover:bg-gray-50 transition"
             >
               <PlusCircle className="w-4 h-4 text-blue-600" />
-              <span>Criar Evento</span>
-            </button>
+              <span>Painel do Produtor</span>
+            </Link>
 
             {user ? (
               <div className="pt-3 border-t border-gray-100 flex items-center justify-between">
