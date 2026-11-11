@@ -912,7 +912,83 @@ CREATE POLICY "tickets: service role gerencia"
 -- Permite que usuários autenticados chamem as funções RPC
 GRANT EXECUTE ON FUNCTION public.reserve_tickets(UUID, UUID, JSONB)    TO authenticated;
 GRANT EXECUTE ON FUNCTION public.expire_unpaid_orders()                 TO service_role;
-GRANT EXECUTE ON FUNCTION public.confirm_order_payment(UUID, JSONB)    TO service_role;
+GRANT EXECUTE ON FUNCTION public.confirm_order_payment(UUID, JSONB)    TO authenticated, service_role;
+
+
+-- =============================================================================
+-- SEÇÃO 8: DADOS INICIAIS DE DEMONSTRAÇÃO (SEED)
+-- =============================================================================
+
+INSERT INTO public.profiles (id, full_name, email, role)
+VALUES ('00000000-0000-0000-0000-000000000001', 'Produtora Nova Live', 'contato@novalive.com', 'organizer')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO public.organizers (id, user_id, company_name, document)
+VALUES ('11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000001', 'Nova Live Entretenimento', '12.345.678/0001-90')
+ON CONFLICT (document) DO NOTHING;
+
+INSERT INTO public.events (
+    id,
+    organizer_id,
+    title,
+    slug,
+    description,
+    banner_url,
+    location_name,
+    address,
+    start_date,
+    end_date,
+    status
+) VALUES (
+    '22222222-2222-2222-2222-222222222222',
+    '11111111-1111-1111-1111-111111111111',
+    'Festival Sonora Beats 2026',
+    'festival-sonora-beats-2026',
+    'O maior festival de música e tecnologia imersiva do Brasil com palcos 360 e atrações internacionais.',
+    'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=1200&q=80',
+    'Parque Ibirapuera - Pavilhão das Artes',
+    'Av. Pedro Álvares Cabral, s/n - São Paulo - SP',
+    NOW() + INTERVAL '15 days',
+    NOW() + INTERVAL '16 days',
+    'published'
+) ON CONFLICT (slug) DO NOTHING;
+
+INSERT INTO public.ticket_batches (
+    id,
+    event_id,
+    name,
+    price,
+    fee_percentage,
+    total_quantity,
+    available_quantity,
+    sales_start,
+    sales_end,
+    status
+) VALUES 
+(
+    '33333333-3333-3333-3333-333333333331',
+    '22222222-2222-2222-2222-222222222222',
+    '1º Lote — Pista',
+    80.00,
+    10.00,
+    300,
+    250,
+    NOW() - INTERVAL '1 day',
+    NOW() + INTERVAL '14 days',
+    'active'
+),
+(
+    '33333333-3333-3333-3333-333333333332',
+    '22222222-2222-2222-2222-222222222222',
+    '1º Lote — Área VIP Open Bar',
+    180.00,
+    10.00,
+    100,
+    60,
+    NOW() - INTERVAL '1 day',
+    NOW() + INTERVAL '14 days',
+    'active'
+) ON CONFLICT (id) DO NOTHING;
 
 
 -- =============================================================================
