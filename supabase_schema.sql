@@ -919,14 +919,44 @@ GRANT EXECUTE ON FUNCTION public.confirm_order_payment(UUID, JSONB)    TO authen
 -- SEÇÃO 8: DADOS INICIAIS DE DEMONSTRAÇÃO (SEED)
 -- =============================================================================
 
-INSERT INTO public.profiles (id, full_name, email, role)
-VALUES ('00000000-0000-0000-0000-000000000001', 'Produtora Nova Live', 'contato@novalive.com', 'organizer')
-ON CONFLICT (id) DO NOTHING;
+-- 8.1 Cria usuário produtor no auth.users do Supabase
+INSERT INTO auth.users (
+    instance_id,
+    id,
+    aud,
+    role,
+    email,
+    encrypted_password,
+    email_confirmed_at,
+    raw_app_meta_data,
+    raw_user_meta_data,
+    created_at,
+    updated_at
+) VALUES (
+    '00000000-0000-0000-0000-000000000000',
+    '00000000-0000-0000-0000-000000000001',
+    'authenticated',
+    'authenticated',
+    'produtor@novatickets.com',
+    crypt('Senha123!@#', gen_salt('bf')),
+    NOW(),
+    '{"provider":"email","providers":["email"]}',
+    '{"full_name":"Produtora Nova Live"}',
+    NOW(),
+    NOW()
+) ON CONFLICT (id) DO NOTHING;
 
+-- 8.2 Garante o profile com role 'organizer'
+INSERT INTO public.profiles (id, full_name, email, role)
+VALUES ('00000000-0000-0000-0000-000000000001', 'Produtora Nova Live', 'produtor@novatickets.com', 'organizer')
+ON CONFLICT (id) DO UPDATE SET role = 'organizer', full_name = 'Produtora Nova Live';
+
+-- 8.3 Registra o organizador
 INSERT INTO public.organizers (id, user_id, company_name, document)
 VALUES ('11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000001', 'Nova Live Entretenimento', '12.345.678/0001-90')
 ON CONFLICT (document) DO NOTHING;
 
+-- 8.4 Cria o evento publicado de demonstração
 INSERT INTO public.events (
     id,
     organizer_id,
@@ -953,6 +983,7 @@ INSERT INTO public.events (
     'published'
 ) ON CONFLICT (slug) DO NOTHING;
 
+-- 8.5 Cria os lotes de ingressos
 INSERT INTO public.ticket_batches (
     id,
     event_id,
