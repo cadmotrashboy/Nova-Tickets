@@ -629,3 +629,4 @@ export const GateCheckinPage: React.FC = () => {
     </div>
   );
 };
+

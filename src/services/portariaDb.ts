@@ -178,3 +178,4 @@ export async function removeFromSyncQueue(id: number): Promise<void> {
   const db = await getDb();
   await db.delete('syncQueue', id);
 }
+
