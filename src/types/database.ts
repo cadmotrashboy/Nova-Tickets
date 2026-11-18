@@ -11,6 +11,7 @@ export type EventStatus = 'draft' | 'published' | 'cancelled' | 'finished';
 export type BatchStatus = 'active' | 'paused' | 'sold_out' | 'closed';
 export type OrderStatus = 'pending' | 'paid' | 'expired' | 'cancelled' | 'refunded';
 export type TicketStatus = 'valid' | 'used' | 'cancelled';
+export type PaymentMethod = 'pix' | 'credit_card' | 'debit_card';
 
 export interface Database {
   public: {
@@ -183,6 +184,10 @@ export interface Database {
           platform_fee_amount: number;
           organizer_amount: number;
           status: OrderStatus;
+          payment_method: PaymentMethod | null;
+          installments: number | null;
+          card_last_digits: string | null;
+          payment_error_message: string | null;
           payment_gateway_id: string | null;
           pix_qr_code: string | null;
           pix_copy_paste: string | null;
@@ -198,6 +203,10 @@ export interface Database {
           platform_fee_amount?: number;
           organizer_amount?: number;
           status?: OrderStatus;
+          payment_method?: PaymentMethod | null;
+          installments?: number | null;
+          card_last_digits?: string | null;
+          payment_error_message?: string | null;
           payment_gateway_id?: string | null;
           pix_qr_code?: string | null;
           pix_copy_paste?: string | null;
@@ -213,6 +222,10 @@ export interface Database {
           platform_fee_amount?: number;
           organizer_amount?: number;
           status?: OrderStatus;
+          payment_method?: PaymentMethod | null;
+          installments?: number | null;
+          card_last_digits?: string | null;
+          payment_error_message?: string | null;
           payment_gateway_id?: string | null;
           pix_qr_code?: string | null;
           pix_copy_paste?: string | null;

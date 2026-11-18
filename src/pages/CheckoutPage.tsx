@@ -9,19 +9,23 @@ import {
   QrCode, 
   User, 
   Mail, 
-  FileText, 
+  CreditCard, 
   ShieldCheck, 
   ArrowLeft, 
   Loader2, 
   Sparkles,
   Zap,
-  Ticket
+  Lock,
+  Calendar,
+  AlertCircle
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import type { Order, OrderItem, Event, TicketBatch, AttendeePayload } from '../types/database';
+import type { Order, OrderItem, Event, TicketBatch, AttendeePayload, PaymentMethod } from '../types/database';
 import { useAuth } from '../context/AuthContext';
 import { formatCurrency, formatCPF, formatShortDate } from '../utils/formatters';
+import { processCardPayment, processPixPayment } from '../services/paymentService';
+import { InteractiveCardPreview } from '../components/checkout/InteractiveCardPreview';
 import { Navbar } from '../components/Navbar';
 import { Footer } from '../components/Footer';
 
@@ -47,13 +51,26 @@ export const CheckoutPage: React.FC = () => {
   const [timeLeftMs, setTimeLeftMs] = useState<number | null>(null);
   const [isExpired, setIsExpired] = useState(false);
   
-  // Controle de etapas: 1 = Formulário de Participantes, 2 = Pagamento Pix
-  const [step, setStep] = useState<'attendees' | 'pix'>('attendees');
+  // Controle de etapas: 'attendees' (Participantes) | 'payment' (Pagamento)
+  const [step, setStep] = useState<'attendees' | 'payment'>('attendees');
+
+  // Método de pagamento selecionado na Etapa 2
+  const [paymentTab, setPaymentTab] = useState<PaymentMethod>('pix');
 
   // Participantes por ingresso: indexado por `${item.batch_id}_${attendeeIndex}`
   const [attendeesMap, setAttendeesMap] = useState<Record<string, FormAttendee>>({});
+  
+  // Dados do Cartão
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardHolder, setCardHolder] = useState('');
+  const [cardExpiry, setCardExpiry] = useState(''); // MM/AA
+  const [cardCvv, setCardCvv] = useState('');
+  const [cardCpf, setCardCpf] = useState('');
+  const [installments, setInstallments] = useState<number>(1);
+
+  // Estados de feedback
   const [copiedPix, setCopiedPix] = useState(false);
-  const [simulatingPayment, setSimulatingPayment] = useState(false);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
 
   // 1. Carrega dados da Order e Order Items
@@ -148,12 +165,14 @@ export const CheckoutPage: React.FC = () => {
       for (let i = 0; i < item.quantity; i++) {
         const key = `${item.batch_id}_${i}`;
         if (isFirst && user) {
-          // O 1º ingresso preenche por padrão com os dados do usuário autenticado
           initial[key] = {
             name: profile?.full_name || '',
             cpf: profile?.cpf || '',
             email: user.email || '',
           };
+          // Preenche também o CPF do cartão como conveniência
+          if (profile?.cpf) setCardCpf(formatCPF(profile.cpf));
+          if (profile?.full_name) setCardHolder(profile.full_name);
           isFirst = false;
         } else {
           initial[key] = {
@@ -211,7 +230,6 @@ export const CheckoutPage: React.FC = () => {
           setOrder(updated);
 
           if (updated.status === 'paid') {
-            // Pagamento confirmado em tempo real! Redireciona com feedback
             navigate('/meus-ingressos', { state: { paymentSuccess: true } });
           } else if (updated.status === 'expired') {
             setIsExpired(true);
@@ -294,63 +312,124 @@ export const CheckoutPage: React.FC = () => {
     });
   };
 
-  // 4. Simulação de Confirmação de Pagamento (Ambiente Dev)
-  const handleSimulatePayment = async () => {
+  // 4. Processamento de Pagamento com Cartão (Crédito ou Débito)
+  const handleProcessCard = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!order) return;
     if (!validateAttendees()) return;
 
-    setSimulatingPayment(true);
+    setPaymentError(null);
+    setIsProcessingPayment(true);
+
+    const [month, year] = cardExpiry.split('/');
+    const attendeesPayload = buildAttendeesPayload();
+
+    try {
+      const result = await processCardPayment({
+        orderId: order.id,
+        paymentMethod: paymentTab === 'debit_card' ? 'debit_card' : 'credit_card',
+        card: {
+          holderName: cardHolder,
+          number: cardNumber,
+          expiryMonth: month || '',
+          expiryYear: year || '',
+          ccv: cardCvv,
+          holderCpf: cardCpf,
+        },
+        installments: paymentTab === 'debit_card' ? 1 : installments,
+        attendees: attendeesPayload,
+        totalAmount: order.total_amount,
+      });
+
+      if (!result.success) {
+        setPaymentError(
+          result.message || 'Cartão recusado pela operadora. Verifique os dados ou tente via Pix.'
+        );
+        return;
+      }
+
+      // Sucesso na transação com cartão
+      navigate('/meus-ingressos', { state: { paymentSuccess: true } });
+    } catch (err: any) {
+      console.error('Falha no pagamento com cartão:', err);
+      setPaymentError(err.message || 'Erro inesperado na operadora. Tente novamente ou pague via Pix.');
+    } finally {
+      setIsProcessingPayment(false);
+    }
+  };
+
+  // 5. Simulação de Confirmação do Pix (Dev / Teste Rápido)
+  const handleSimulatePixPayment = async () => {
+    if (!order) return;
+    if (!validateAttendees()) return;
+
+    setIsProcessingPayment(true);
     setPaymentError(null);
 
     const attendeesPayload = buildAttendeesPayload();
 
     try {
-      if (!isSupabaseConfigured) {
-        // Fallback local
-        const mockTickets = attendeesPayload.flatMap((group) =>
-          group.attendees.map((att, idx) => ({
-            id: `tick-${Date.now()}-${idx}`,
-            order_id: order.id,
-            event_id: order.event_id,
-            batch_id: group.batch_id,
-            owner_name: att.name,
-            owner_cpf: att.cpf,
-            owner_email: att.email,
-            qr_code_hash: `HMAC_SHA256_HASH_${Date.now()}_${idx}`,
-            status: 'valid',
-            checked_in_at: null,
-            checked_in_by: null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            event,
-            batch: orderItems.find((i) => i.batch_id === group.batch_id)?.batch,
-          }))
-        );
-
-        localStorage.setItem(`tickets_user_${order.user_id}`, JSON.stringify(mockTickets));
-        navigate('/meus-ingressos', { state: { paymentSuccess: true } });
+      const result = await processPixPayment(order.id, attendeesPayload);
+      if (!result.success) {
+        setPaymentError(result.message || 'Erro ao confirmar Pix.');
         return;
       }
-
-      // Invoca a função RPC oficial do Supabase: confirm_order_payment
-      const { data: success, error: rpcError } = await (supabase.rpc as any)('confirm_order_payment', {
-        p_order_id: order.id,
-        p_attendees: attendeesPayload,
-      });
-
-      if (rpcError) {
-        throw new Error(rpcError.message || 'Erro ao confirmar pagamento.');
-      }
-
-      // Redireciona para Meus Ingressos
       navigate('/meus-ingressos', { state: { paymentSuccess: true } });
     } catch (err: any) {
-      console.error('Erro na simulação do pagamento:', err);
-      setPaymentError(err.message || 'Erro ao processar pagamento.');
+      setPaymentError(err.message || 'Erro ao processar Pix.');
     } finally {
-      setSimulatingPayment(false);
+      setIsProcessingPayment(false);
     }
   };
+
+  // Máscaras de entrada para o cartão
+  const handleCardNumberChange = (val: string) => {
+    const clean = val.replace(/\D/g, '').slice(0, 16);
+    const parts = clean.match(/.{1,4}/g);
+    setCardNumber(parts ? parts.join(' ') : clean);
+  };
+
+  const handleExpiryChange = (val: string) => {
+    let clean = val.replace(/\D/g, '').slice(0, 4);
+    if (clean.length >= 3) {
+      clean = `${clean.slice(0, 2)}/${clean.slice(2, 4)}`;
+    }
+    setCardExpiry(clean);
+  };
+
+  // Cálculo das opções de parcelamento
+  const installmentOptions = useMemo(() => {
+    if (!order) return [];
+    const total = order.total_amount;
+    const options = [];
+
+    for (let i = 1; i <= 12; i++) {
+      if (i === 1) {
+        options.push({
+          count: 1,
+          label: `1x de ${formatCurrency(total)} (à vista sem juros)`,
+          installmentAmount: total,
+        });
+      } else if (i <= 6) {
+        const part = total / i;
+        options.push({
+          count: i,
+          label: `${i}x de ${formatCurrency(part)} sem juros`,
+          installmentAmount: part,
+        });
+      } else {
+        // Simulação com pequena taxa de parcelamento
+        const totalWithInterest = total * (1 + (i * 0.012));
+        const part = totalWithInterest / i;
+        options.push({
+          count: i,
+          label: `${i}x de ${formatCurrency(part)} (total ${formatCurrency(totalWithInterest)})`,
+          installmentAmount: part,
+        });
+      }
+    }
+    return options;
+  }, [order?.total_amount]);
 
   if (loading) {
     return (
@@ -416,6 +495,8 @@ export const CheckoutPage: React.FC = () => {
     );
   }
 
+  const [monthPart, yearPart] = cardExpiry.split('/');
+
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
       <Navbar />
@@ -445,12 +526,13 @@ export const CheckoutPage: React.FC = () => {
 
       <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 py-8">
         
+        {/* Alerta de Erro no Pagamento (visível sem resetar dados dos participantes) */}
         {paymentError && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-3 text-red-700 text-sm">
-            <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="font-bold">Atenção</p>
-              <p className="text-xs mt-0.5">{paymentError}</p>
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-3 text-red-700 text-sm shadow-sm animate-fade-in">
+            <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-bold">Aviso no Pagamento</p>
+              <p className="text-xs mt-0.5 text-red-600">{paymentError}</p>
             </div>
           </div>
         )}
@@ -499,17 +581,17 @@ export const CheckoutPage: React.FC = () => {
             <button
               onClick={() => {
                 if (validateAttendees()) {
-                  setStep('pix');
+                  setStep('payment');
                 }
               }}
               className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider px-4 py-2 rounded-xl transition ${
-                step === 'pix'
+                step === 'payment'
                   ? 'bg-blue-600 text-white shadow-sm'
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             >
-              <QrCode className="w-4 h-4" />
-              <span>2. Pagamento Pix</span>
+              <CreditCard className="w-4 h-4" />
+              <span>2. Escolher Pagamento</span>
             </button>
           </div>
         </div>
@@ -608,117 +690,320 @@ export const CheckoutPage: React.FC = () => {
                   type="button"
                   onClick={() => {
                     if (validateAttendees()) {
-                      setStep('pix');
+                      setStep('payment');
                     }
                   }}
                   className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm shadow-md transition flex items-center gap-2"
                 >
-                  <span>Continuar para Pagamento Pix</span>
-                  <QrCode className="w-4 h-4" />
+                  <span>Avançar para Pagamento</span>
+                  <CreditCard className="w-4 h-4" />
                 </button>
               </div>
             </div>
           </div>
         )}
 
-        {/* ETAPA 2: Pagamento Pix */}
-        {step === 'pix' && (
+        {/* ETAPA 2: Escolha de Método de Pagamento com Abas */}
+        {step === 'payment' && (
           <div className="space-y-6">
-            <div className="bg-white rounded-2xl border border-gray-200 p-6 sm:p-8 shadow-sm">
-              <div className="text-center max-w-md mx-auto mb-8">
-                <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-emerald-200">
-                  <Zap className="w-6 h-6" />
-                </div>
-                <h2 className="text-2xl font-extrabold text-gray-900">
-                  Pague com Pix
-                </h2>
-                <p className="text-xs text-gray-500 mt-1">
-                  Abra o aplicativo do seu banco, escolha <strong>Pagar com Pix</strong> e aponte a câmera para o QR Code ou copie o código abaixo.
-                </p>
-              </div>
+            
+            {/* Seletor de Abas de Pagamento */}
+            <div className="bg-white rounded-2xl border border-gray-200 p-2 shadow-sm grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPaymentTab('pix');
+                  setPaymentError(null);
+                }}
+                className={`py-3 px-3 rounded-xl text-xs sm:text-sm font-bold transition flex items-center justify-center gap-2 ${
+                  paymentTab === 'pix'
+                    ? 'bg-emerald-600 text-white shadow'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <Zap className="w-4 h-4" />
+                <span>Pix (Imediato)</span>
+              </button>
 
-              {/* QR Code Central */}
-              <div className="flex flex-col items-center justify-center mb-8">
-                <div className="p-4 bg-white rounded-2xl border-2 border-dashed border-gray-300 shadow-md">
-                  <QRCodeSVG
-                    value={pixCopyPasteCode}
-                    size={220}
-                    level="H"
-                    includeMargin={true}
-                  />
-                </div>
-                <div className="flex items-center gap-2 text-xs font-semibold text-emerald-600 mt-3 animate-pulse">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                  <span>Aguardando identificação do pagamento...</span>
-                </div>
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPaymentTab('credit_card');
+                  setPaymentError(null);
+                }}
+                className={`py-3 px-3 rounded-xl text-xs sm:text-sm font-bold transition flex items-center justify-center gap-2 ${
+                  paymentTab === 'credit_card'
+                    ? 'bg-blue-600 text-white shadow'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <CreditCard className="w-4 h-4" />
+                <span>Cartão de Crédito</span>
+              </button>
 
-              {/* Código Pix Copia e Cola */}
-              <div className="max-w-lg mx-auto space-y-2 mb-8">
-                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider text-center">
-                  Código Pix Copia e Cola
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={pixCopyPasteCode}
-                    className="flex-1 px-3 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-xs font-mono text-gray-600 truncate focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleCopyPix}
-                    className="px-4 py-2.5 bg-gray-900 hover:bg-black text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 flex-shrink-0"
-                  >
-                    {copiedPix ? (
-                      <>
-                        <Check className="w-4 h-4 text-emerald-400" />
-                        <span>Copiado!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-4 h-4" />
-                        <span>Copiar Código</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPaymentTab('debit_card');
+                  setPaymentError(null);
+                }}
+                className={`py-3 px-3 rounded-xl text-xs sm:text-sm font-bold transition flex items-center justify-center gap-2 ${
+                  paymentTab === 'debit_card'
+                    ? 'bg-indigo-600 text-white shadow'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>Cartão de Débito</span>
+              </button>
+            </div>
 
-              {/* Ambiente de Teste / Dev - Simulação de Confirmação */}
-              <div className="mt-8 pt-6 border-t border-gray-200 bg-amber-50/60 -mx-6 -mb-6 p-6 rounded-b-2xl border-dashed border-amber-200">
-                <div className="flex items-center justify-between flex-wrap gap-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900 uppercase tracking-wider">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                      <span>Simulador de Webhook Pix (Ambiente Dev)</span>
-                    </div>
-                    <p className="text-xs text-amber-700 max-w-md">
-                      Dispara a RPC <code>confirm_order_payment</code> emitindo os ingressos com HMAC-SHA256 e atualiza o pedido para <code>paid</code> em tempo real.
-                    </p>
+            {/* CONTEÚDO DA ABA 1: PIX */}
+            {paymentTab === 'pix' && (
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 sm:p-8 shadow-sm">
+                <div className="text-center max-w-md mx-auto mb-8">
+                  <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-emerald-200">
+                    <Zap className="w-6 h-6" />
                   </div>
+                  <h2 className="text-2xl font-extrabold text-gray-900">
+                    Pague com Pix
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Abra o app do seu banco, escolha <strong>Pagar com Pix</strong> e aponte a câmera para o QR Code ou copie o código abaixo.
+                  </p>
+                </div>
 
+                {/* QR Code Central */}
+                <div className="flex flex-col items-center justify-center mb-8">
+                  <div className="p-4 bg-white rounded-2xl border-2 border-dashed border-gray-300 shadow-md">
+                    <QRCodeSVG
+                      value={pixCopyPasteCode}
+                      size={220}
+                      level="H"
+                      includeMargin={true}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 text-xs font-semibold text-emerald-600 mt-3 animate-pulse">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span>Aguardando identificação do pagamento em tempo real...</span>
+                  </div>
+                </div>
+
+                {/* Código Pix Copia e Cola */}
+                <div className="max-w-lg mx-auto space-y-2 mb-8">
+                  <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider text-center">
+                    Código Pix Copia e Cola
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={pixCopyPasteCode}
+                      className="flex-1 px-3 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-xs font-mono text-gray-600 truncate focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCopyPix}
+                      className="px-4 py-2.5 bg-gray-900 hover:bg-black text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 flex-shrink-0"
+                    >
+                      {copiedPix ? (
+                        <>
+                          <Check className="w-4 h-4 text-emerald-400" />
+                          <span>Copiado!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-4 h-4" />
+                          <span>Copiar Código</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Simulação Dev */}
+                <div className="pt-6 border-t border-gray-100 flex items-center justify-between flex-wrap gap-4 bg-emerald-50/50 -mx-6 -mb-6 p-6 rounded-b-2xl">
+                  <div>
+                    <span className="text-xs font-bold text-emerald-900 block">
+                      Ambiente de Testes / Sandbox
+                    </span>
+                    <span className="text-xs text-emerald-700">
+                      Simule a notificação de confirmação do Pix para emitir os ingressos.
+                    </span>
+                  </div>
                   <button
                     type="button"
-                    disabled={simulatingPayment}
-                    onClick={handleSimulatePayment}
-                    className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl shadow transition flex items-center gap-2 disabled:opacity-50"
+                    disabled={isProcessingPayment}
+                    onClick={handleSimulatePixPayment}
+                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow transition flex items-center gap-2"
                   >
-                    {simulatingPayment ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Confirmando...</span>
-                      </>
+                    {isProcessingPayment ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
                       <>
                         <Zap className="w-4 h-4" />
-                        <span>⚡ Simular Confirmação de Pagamento</span>
+                        <span>Simular Confirmação Pix</span>
                       </>
                     )}
                   </button>
                 </div>
               </div>
-            </div>
+            )}
+
+            {/* CONTEÚDO DA ABA 2 e 3: CARTÃO DE CRÉDITO OU DÉBITO */}
+            {(paymentTab === 'credit_card' || paymentTab === 'debit_card') && (
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 sm:p-8 shadow-sm">
+                
+                {/* Visual Interativo do Cartão com Atualização em Tempo Real */}
+                <InteractiveCardPreview
+                  number={cardNumber}
+                  holderName={cardHolder}
+                  expiryMonth={monthPart || ''}
+                  expiryYear={yearPart || ''}
+                  isDebit={paymentTab === 'debit_card'}
+                />
+
+                <form onSubmit={handleProcessCard} className="max-w-xl mx-auto space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+                      Número do Cartão *
+                    </label>
+                    <div className="relative">
+                      <CreditCard className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        required
+                        maxLength={19}
+                        value={cardNumber}
+                        onChange={(e) => handleCardNumberChange(e.target.value)}
+                        placeholder="0000 0000 0000 0000"
+                        className="w-full pl-10 pr-3.5 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+                      Nome Impresso no Cartão *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={cardHolder}
+                      onChange={(e) => setCardHolder(e.target.value.toUpperCase())}
+                      placeholder="COMO CONSTA NO CARTÃO"
+                      className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm uppercase focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+                        Validade (MM/AA) *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        maxLength={5}
+                        value={cardExpiry}
+                        onChange={(e) => handleExpiryChange(e.target.value)}
+                        placeholder="12/28"
+                        className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+                        CVV / Código de Segurança *
+                      </label>
+                      <div className="relative">
+                        <Lock className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="password"
+                          required
+                          maxLength={4}
+                          value={cardCvv}
+                          onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, ''))}
+                          placeholder="123"
+                          className="w-full pl-10 pr-3.5 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+                      CPF do Titular do Cartão *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={14}
+                      value={cardCpf}
+                      onChange={(e) => setCardCpf(formatCPF(e.target.value))}
+                      placeholder="000.000.000-00"
+                      className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition"
+                    />
+                  </div>
+
+                  {/* Seletor de Parcelamento (Apenas Crédito) */}
+                  {paymentTab === 'credit_card' ? (
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+                        Opções de Parcelamento *
+                      </label>
+                      <select
+                        value={installments}
+                        onChange={(e) => setInstallments(parseInt(e.target.value, 10))}
+                        className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm font-semibold text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition"
+                      >
+                        {installmentOptions.map((opt) => (
+                          <option key={opt.count} value={opt.count}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-700 flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                      <span>
+                        Débito à vista: O valor de <strong>{formatCurrency(order.total_amount)}</strong> será debitado diretamente de sua conta bancária.
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="pt-4 border-t border-gray-100 space-y-3">
+                    <button
+                      type="submit"
+                      disabled={isProcessingPayment}
+                      className="w-full py-4 px-6 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm shadow-md hover:shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {isProcessingPayment ? (
+                        <>
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                          <span>Processando pagamento com a operadora...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Lock className="w-4 h-4" />
+                          <span>
+                            {paymentTab === 'credit_card'
+                              ? `Pagar ${formatCurrency(order.total_amount)} em ${installments}x`
+                              : `Pagar ${formatCurrency(order.total_amount)} no Débito`}
+                          </span>
+                        </>
+                      )}
+                    </button>
+
+                    <div className="flex items-center justify-center gap-2 text-[11px] text-gray-500">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Transação criptografada com certificado SSL e autenticação 3DS</span>
+                    </div>
+                  </div>
+                </form>
+              </div>
+            )}
           </div>
         )}
       </main>

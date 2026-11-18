@@ -128,7 +128,11 @@ CREATE TABLE IF NOT EXISTS public.orders (
     organizer_amount        NUMERIC(10, 2) NOT NULL DEFAULT 0 CHECK (organizer_amount >= 0),
     status                  TEXT        NOT NULL DEFAULT 'pending'
                                         CHECK (status IN ('pending', 'paid', 'expired', 'cancelled', 'refunded')),
-    payment_gateway_id      TEXT,       -- ID da transação na gateway (ex: tr_xxxxxxxxxxx)
+    payment_method          TEXT        CHECK (payment_method IN ('pix', 'credit_card', 'debit_card')),
+    installments            INTEGER     DEFAULT 1 CHECK (installments >= 1),
+    card_last_digits        TEXT,       -- Últimos 4 dígitos do cartão para exibição segura
+    payment_error_message   TEXT,       -- Mensagem de erro caso o pagamento seja recusado
+    payment_gateway_id      TEXT,       -- ID da transação na gateway (ex: pay_xxxxxxxxxxx)
     pix_qr_code             TEXT,       -- QR Code em base64
     pix_copy_paste          TEXT,       -- Código copia-e-cola do PIX
     expires_at              TIMESTAMPTZ NOT NULL,
